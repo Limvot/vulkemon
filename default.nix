@@ -4,6 +4,7 @@
   name = "rust-vulkan-env";
   targetPkgs = pkgs: (with pkgs;
     [
+      rustup
       pkg-config
       binutils-unwrapped
       glxinfo
