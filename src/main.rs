@@ -5,7 +5,8 @@ fn main() {
 
     let mut events_loop = EventsLoop::new();
     let window = Window::new(&events_loop).unwrap();
-    let size = window.get_inner_size().unwrap().to_physical(window.get_hidpi_factor());
+    let hidpi_factor = window.get_hidpi_factor();
+    let size = window.get_inner_size().unwrap().to_physical(hidpi_factor);
     let instance = wgpu::Instance::new();
     let surface = instance.create_surface(&window);
     let adapter = instance.get_adapter(&wgpu::AdapterDescriptor {
@@ -197,16 +198,14 @@ fn main() {
         sample_count: 1,
     });
 
-    let mut swap_chain = device.create_swap_chain(
-        &surface,
-        &wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: size.width.round() as u32,
-            height: size.height.round() as u32,
-            present_mode: wgpu::PresentMode::Vsync,
-        },
-    );
+    let mut swap_chain_descriptor = wgpu::SwapChainDescriptor {
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        width: size.width.round() as u32,
+        height: size.height.round() as u32,
+        present_mode: wgpu::PresentMode::Vsync,
+    };
+    let mut swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
     let mut running = true;
     while running {
         events_loop.poll_events(|event| match event {
@@ -219,6 +218,13 @@ fn main() {
                 } => match code {
                     VirtualKeyCode::Escape => running = false,
                     _ => {},
+                },
+                WindowEvent::Resized(size) => {
+                    let physical = size.to_physical(hidpi_factor);
+                    println!("resizing to {:?}", physical);
+                    swap_chain_descriptor.width = physical.width.round() as u32;
+                    swap_chain_descriptor.height = physical.height.round() as u32;
+                    swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
                 },
                 WindowEvent::CloseRequested => running = false,
                 _ => {},
