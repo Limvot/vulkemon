@@ -16,6 +16,7 @@
       xorg.libXcursor
       xorg.libXrandr
       xorg.libxcb
+      xorg.libXi
     ]);
   runScript = "bash -c \"export PKG_CONFIG_PATH='${pkgs.xorg.libX11.dev}/lib/pkgconfig:${pkgs.xorg.xorgproto}/share/pkgconfig' && bash\"";
 }).env

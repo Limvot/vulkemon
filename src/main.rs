@@ -201,30 +201,33 @@ fn main() {
     let mut swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
     let mut running = true;
     while running {
-        events_loop.poll_events(|event| match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::KeyboardInput { input: KeyboardInput { virtual_keycode: Some(code),
-                                                                    state: ElementState::Pressed,
-                                                                    ..
-                                                                  },
-                                              ..
-                } => match code {
-                    VirtualKeyCode::Escape => running = false,
-                    _ => {
-                        println!("ignoring keycode {:?}", code);
+        events_loop.poll_events(|event| {
+            println!("{:?} event is", event);
+            match event {
+                Event::WindowEvent { event, .. } => match event {
+                    WindowEvent::KeyboardInput { input: KeyboardInput { virtual_keycode: Some(code),
+                                                                        state: ElementState::Pressed,
+                                                                        ..
+                                                                      },
+                                                  ..
+                    } => match code {
+                        VirtualKeyCode::Escape => running = false,
+                        _ => {
+                            println!("ignoring keycode {:?}", code);
+                        },
                     },
+                    WindowEvent::Resized(size) => {
+                        let physical = size.to_physical(hidpi_factor);
+                        println!("resizing to {:?}", physical);
+                        swap_chain_descriptor.width = physical.width.round() as u32;
+                        swap_chain_descriptor.height = physical.height.round() as u32;
+                        swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
+                    },
+                    WindowEvent::CloseRequested => running = false,
+                    _ => {},
                 },
-                WindowEvent::Resized(size) => {
-                    let physical = size.to_physical(hidpi_factor);
-                    println!("resizing to {:?}", physical);
-                    swap_chain_descriptor.width = physical.width.round() as u32;
-                    swap_chain_descriptor.height = physical.height.round() as u32;
-                    swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
-                },
-                WindowEvent::CloseRequested => running = false,
-                _ => {},
-            },
-            _ => {}
+                _ => {}
+            }
         });
 
         let frame = swap_chain.get_next_texture();
