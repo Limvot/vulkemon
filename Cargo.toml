@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 glsl-to-spirv = "0.1"
+image = "0.22.1"
 
 [dependencies.wgpu]
 git = "https://github.com/gfx-rs/wgpu-rs"

@@ -1,8 +1,8 @@
 use wgpu::winit::*;
+use image::*;
 
 fn main() {
     println!("Hello, world!");
-
     let mut events_loop = EventsLoop::new();
     let window = Window::new(&events_loop).unwrap();
     let hidpi_factor = window.get_hidpi_factor();
@@ -18,25 +18,6 @@ fn main() {
         },
         limits: wgpu::Limits::default(),
     });
-
-    fn create_texels(size: usize) -> Vec<u8> {
-        use std::iter;
-        (0 .. size*size).flat_map(|id| {
-            let cx = 3.0 * (id % size) as f32 / (size-1) as f32 - 2.0;
-            let cy = 2.0 * (id / size) as f32 / (size-1) as f32 - 1.0;
-            let (mut x, mut y, mut count) = (cx, cy, 0);
-            while count < 0xFF && x * x + y * y < 4.0 {
-                let old_x = x;
-                x = x*x - y*y + cx;
-                y = 2.0 * old_x * y + cy;
-                count += 1;
-            }
-            iter::once(0xFF - (count*5) as u8)
-                .chain(iter::once(0xFF - (count * 15) as u8))
-                .chain(iter::once(0xFF - (count * 50) as u8))
-                .chain(iter::once(1))
-        }).collect()
-    }
 
     fn compile_shadercode(code: &str, stage: glsl_to_spirv::ShaderType) -> Vec<u32> {
         use std::io::Read;
@@ -57,15 +38,23 @@ fn main() {
     //out gl_PerVertex {
         //vec4 gl_Position;
     //};
-    const vec2 positions[3] = vec2[3](
-        vec2( 0.0, -0.5),
+    const vec2 positions[6] = vec2[6](
+        vec2(-0.5, -0.5),
         vec2( 0.5,  0.5),
-        vec2(-0.5,  0.5)
+        vec2(-0.5,  0.5),
+
+        vec2(-0.5, -0.5),
+        vec2( 0.5, -0.5),
+        vec2( 0.5,  0.5)
     );
-    const vec2 tex[3] = vec2[3](
-        vec2(0.5, 1.0),
+    const vec2 tex[6] = vec2[6](
+        vec2(1.0, 1.0),
         vec2(0.0, 0.0),
-        vec2(1.0, 0.0)
+        vec2(1.0, 0.0),
+
+        vec2(1.0, 1.0),
+        vec2(0.0, 1.0),
+        vec2(0.0, 0.0)
     );
     void main() {
         gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
@@ -86,11 +75,15 @@ fn main() {
     }"#, glsl_to_spirv::ShaderType::Fragment);
     let fs_module = device.create_shader_module(&fs_words);
 
-    let tsize = 256u32;
-    let texels = create_texels(tsize as usize);
+    let img = open("./resources/littleroot.png").unwrap().to_rgba();
+    let (twidth, theight) = img.dimensions();
+    let texels: Vec<u8> = (0..theight).rev().flat_map(|y| (0..twidth).rev().map(move |x| (x,y)))
+                            .flat_map(|(x,y)|
+                                img.get_pixel(x,y).channels().into_iter().cloned()
+                            ).collect();
     let texture_extant = wgpu::Extent3d {
-        width: tsize,
-        height: tsize,
+        width: twidth,
+        height: theight,
         depth: 1,
     };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -110,8 +103,8 @@ fn main() {
         wgpu::BufferCopyView {
             buffer: &temp_buf,
             offset: 0,
-            row_pitch: 4*tsize,
-            image_height: tsize,
+            row_pitch: 4*twidth,
+            image_height: theight,
         },
         wgpu::TextureCopyView {
             texture: &texture,
@@ -217,7 +210,9 @@ fn main() {
                                               ..
                 } => match code {
                     VirtualKeyCode::Escape => running = false,
-                    _ => {},
+                    _ => {
+                        println!("ignoring keycode {:?}", code);
+                    },
                 },
                 WindowEvent::Resized(size) => {
                     let physical = size.to_physical(hidpi_factor);
@@ -247,7 +242,7 @@ fn main() {
             });
             rpass.set_pipeline(&render_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
-            rpass.draw(0..3, 0..1);
+            rpass.draw(0..6, 0..1);
         }
         device.get_queue().submit(&[encoder.finish()]);
     }
