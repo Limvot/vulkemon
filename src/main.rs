@@ -205,15 +205,17 @@ fn main() {
             println!("{:?} event is", event);
             match event {
                 Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::KeyboardInput { input: KeyboardInput { virtual_keycode: Some(code),
+                    // raw_code is fallback if virtual_keycode is None because of bug in winit (I think)
+                    WindowEvent::KeyboardInput { input: KeyboardInput { scancode: raw_code,
+                                                                        virtual_keycode: maybe_virt_code,
                                                                         state: ElementState::Pressed,
                                                                         ..
                                                                       },
                                                   ..
-                    } => match code {
-                        VirtualKeyCode::Escape => running = false,
+                    } => match (raw_code, maybe_virt_code) {
+                        (1, None) | (_, Some(VirtualKeyCode::Escape)) => running = false,
                         _ => {
-                            println!("ignoring keycode {:?}", code);
+                            println!("ignoring keycode {:?} / {:?}", raw_code, maybe_virt_code);
                         },
                     },
                     WindowEvent::Resized(size) => {
