@@ -34,6 +34,10 @@ fn main() {
     let vs_words = compile_shadercode(r#"
     #version 450
     layout(location = 0) out vec2 v_TexCoord;
+    layout(set = 1, binding = 0) uniform Pos {
+        float x;
+        float y;
+    };
     // redundant definition?
     //out gl_PerVertex {
         //vec4 gl_Position;
@@ -57,7 +61,7 @@ fn main() {
         vec2(0.0, 0.0)
     );
     void main() {
-        gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+        gl_Position = vec4(positions[gl_VertexIndex].x + x, positions[gl_VertexIndex].y + y, 0.0, 1.0);
         v_TexCoord = tex[gl_VertexIndex];
     }"#, glsl_to_spirv::ShaderType::Vertex);
     let vs_module = device.create_shader_module(&vs_words);
@@ -158,8 +162,31 @@ fn main() {
             },
         ],
     });
+    let local_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        bindings: &[
+            wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer,
+            },
+        ],
+    });
+    let uniform_buf = device.create_buffer_mapped(2, wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST).fill_from_slice(&[0.0f32, 0.0f32]);
+    let uniform_size = 8;
+    let local_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &local_bind_group_layout,
+        bindings: &[
+            wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &uniform_buf,
+                    range: 0 .. uniform_size,
+                },
+            },
+        ],
+    });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        bind_group_layouts: &[&bind_group_layout],
+        bind_group_layouts: &[&bind_group_layout, &local_bind_group_layout],
     });
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         layout: &pipeline_layout,
@@ -200,6 +227,8 @@ fn main() {
     };
     let mut swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
     let mut running = true;
+    let mut x_off = 0.0f32;
+    let mut y_off = 0.0f32;
     while running {
         events_loop.poll_events(|event| {
             println!("{:?} event is", event);
@@ -214,6 +243,10 @@ fn main() {
                                                   ..
                     } => match (raw_code, maybe_virt_code) {
                         (1, None) | (_, Some(VirtualKeyCode::Escape)) => running = false,
+                        (30, None) | (_, Some(VirtualKeyCode::A)) => x_off -= 0.01f32,
+                        (32, None) | (_, Some(VirtualKeyCode::D)) => x_off += 0.01f32,
+                        (17, None) | (_, Some(VirtualKeyCode::W)) => y_off -= 0.01f32,
+                        (31, None) | (_, Some(VirtualKeyCode::S)) => y_off += 0.01f32,
                         _ => {
                             println!("ignoring keycode {:?} / {:?}", raw_code, maybe_virt_code);
                         },
@@ -234,6 +267,8 @@ fn main() {
 
         let frame = swap_chain.get_next_texture();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo : 0 });
+        let updated_uniform_buf = device.create_buffer_mapped(2, wgpu::BufferUsage::TRANSFER_SRC).fill_from_slice(&[x_off, y_off]);
+        encoder.copy_buffer_to_buffer(&updated_uniform_buf, 0, &uniform_buf, 0, uniform_size);
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -247,6 +282,7 @@ fn main() {
             });
             rpass.set_pipeline(&render_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.set_bind_group(1, &local_bind_group, &[]);
             rpass.draw(0..6, 0..1);
         }
         device.get_queue().submit(&[encoder.finish()]);
