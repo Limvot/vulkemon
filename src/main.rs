@@ -1,15 +1,22 @@
+
+use std::fs::File;
+use failure::Error;
+
+use serde::{Serialize, Deserialize};
+use serde_json;
+
 use wgpu::winit::*;
 use image::*;
 
 struct Square {
-    x: f32,
-    y: f32,
-    sx: f32,
-    sy: f32,
-    tx: f32,
-    ty: f32,
-    stx: f32,
-    sty: f32,
+    pub x: f32,
+    pub y: f32,
+    pub sx: f32,
+    pub sy: f32,
+    pub tx: f32,
+    pub ty: f32,
+    pub stx: f32,
+    pub sty: f32,
     uniform_size: u64,
     uniform_buf: wgpu::Buffer,
     uniform_buf_dirty: bool,
@@ -35,9 +42,19 @@ impl Square {
             x, y, sx, sy, tx, ty, stx, sty, uniform_size, uniform_buf, uniform_buf_dirty: false, local_bind_group,
         }
     }
+    fn set_pos(&mut self, x: f32, y: f32) {
+        self.x = x;
+        self.y = y;
+        self.uniform_buf_dirty = true;
+    }
     fn pos_delta(&mut self, dx: f32, dy: f32) {
         self.x += dx;
         self.y += dy;
+        self.uniform_buf_dirty = true;
+    }
+    fn set_siz(&mut self, sx: f32, sy: f32) {
+        self.sx = sx;
+        self.sy = sy;
         self.uniform_buf_dirty = true;
     }
     fn siz_delta(&mut self, dx: f32, dy: f32) {
@@ -87,6 +104,9 @@ impl World {
         self.y += dy;
         self.uniform_buf_dirty = true;
     }
+    fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+    }
     fn scale_up(&mut self) {
         self.scale *= 1.0/0.9;
         self.uniform_buf_dirty = true;
@@ -103,7 +123,17 @@ impl World {
     }
 }
 
-fn main() {
+#[derive(Serialize, Deserialize, Debug)]
+struct Save {
+    x_increment: f32,
+    y_increment: f32,
+    x_start: f32,
+    y_start: f32,
+    width_in_tiles: f32,
+    height_in_tiles: f32,
+}
+
+fn main() -> Result<(), Error> {
     println!("Hello, world!");
     let mut events_loop = EventsLoop::new();
     let window = Window::new(&events_loop).unwrap();
@@ -295,8 +325,8 @@ fn main() {
     });
     let mut world = World::new(0.0, 0.0, 1.0, &device, &world_bind_group_layout);
     let mut squares = vec![
+        Square::new(0.0, 0.0, twidth as f32, theight as f32, 0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout),
         Square::new(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout),
-        Square::new(0.5, 0.5, 1.0, 1.0, 1.0, 1.0,-1.0,-1.0, &device, &local_bind_group_layout),
     ];
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         bind_group_layouts: &[&bind_group_layout, &world_bind_group_layout, &local_bind_group_layout],
@@ -340,9 +370,21 @@ fn main() {
     };
     let mut swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
     let mut running = true;
-    let mut world_x = 0.0;
-    let mut world_y = 0.0;
-    let mut world_scale = 0.0;
+    world.set_scale(1.0/(theight as f32));
+    let mut save = if let Ok(file) = File::open("./save.json") {
+        serde_json::from_reader(file)?
+    } else {
+        Save {
+            x_increment: 1.0,
+            y_increment: 1.0,
+            x_start: 0.0,
+            y_start: 0.0,
+            width_in_tiles: 0.0,
+            height_in_tiles: 0.0,
+        }
+    };
+    squares[1].set_pos(save.x_start, save.y_start);
+    squares[1].set_siz(save.x_increment, save.y_increment);
     while running {
         events_loop.poll_events(|event| {
             println!("{:?} event is", event);
@@ -356,31 +398,59 @@ fn main() {
                                                                       },
                                                   ..
                     } => match (raw_code, maybe_virt_code) {
-                        (1, None)   | (_, Some(VirtualKeyCode::Escape)) => running = false,
+                        (1,  None)  | (_, Some(VirtualKeyCode::Escape)) => running = false,
+                        (44, None)  | (_, Some(VirtualKeyCode::Z))  => {
+                            println!("\nsetting x/y increment {},{} !{},{}!\n", squares[1].x, squares[1].y, squares[1].sx, squares[1].sy);
+                            save.x_increment = squares[1].sx;
+                            save.y_increment = squares[1].sy;
+                        },
+                        (45, None)  | (_, Some(VirtualKeyCode::X))  => {
+                            println!("\nsetting x/y start !{},{}! {},{}\n", squares[1].x, squares[1].y, squares[1].sx, squares[1].sy);
+                            save.x_start = squares[1].x;
+                            save.y_start = squares[1].y;
+                        },
+                        (46, None)  | (_, Some(VirtualKeyCode::C))  => {
+                            save.width_in_tiles =  (squares[1].x - save.x_start) / save.x_increment;
+                            save.height_in_tiles = (squares[1].y - save.y_start) / save.y_increment;
+                            println!("\nsetting tile widht/height {},{} {},{} - !{}, {}!\n", squares[1].x, squares[1].y, squares[1].sx, squares[1].sy, save.width_in_tiles, save.height_in_tiles);
+                        },
+                        (47, None)  | (_, Some(VirtualKeyCode::V))  => {
+                            serde_json::to_writer(File::create("./save.json").unwrap(), &save).unwrap();
+                            println!("\nsaved!\n");
+                        },
                         (57, None)  | (_, Some(VirtualKeyCode::Space))  => {
-                            squares.push(Square::new(0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout));
+                            squares.drain(2..);
+                            for i in 0..(save.width_in_tiles as usize) {
+                                for j in 0..(save.height_in_tiles as usize) {
+                                    squares.push(Square::new(save.x_start + (i as f32 + 0.25) * save.x_increment,
+                                                             save.y_start + (j as f32 + 0.25) * save.y_increment,
+                                                             save.x_increment/2.0,
+                                                             save.y_increment/2.0,
+                                                              0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout));
+                                }
+                            }
+                            println!("\n{},{} {},{}\n", squares[1].x, squares[1].y, squares[1].sx, squares[1].sy);
+                            println!("squares len {}", squares.len());
                         },
                         // top left corner
-                        (30, None)  | (_, Some(VirtualKeyCode::A))      => squares[0].pos_delta(-0.01f32, 0.00f32),
-                        (32, None)  | (_, Some(VirtualKeyCode::D))      => squares[0].pos_delta( 0.01f32, 0.00f32),
-                        (17, None)  | (_, Some(VirtualKeyCode::W))      => squares[0].pos_delta( 0.00f32,-0.01f32),
-                        (31, None)  | (_, Some(VirtualKeyCode::S))      => squares[0].pos_delta( 0.00f32, 0.01f32),
+                        (30, None)  | (_, Some(VirtualKeyCode::A))      => squares[1].pos_delta(-save.x_increment, 0.00f32),
+                        (32, None)  | (_, Some(VirtualKeyCode::D))      => squares[1].pos_delta( save.x_increment, 0.00f32),
+                        (17, None)  | (_, Some(VirtualKeyCode::W))      => squares[1].pos_delta( 0.00f32,-save.y_increment),
+                        (31, None)  | (_, Some(VirtualKeyCode::S))      => squares[1].pos_delta( 0.00f32, save.y_increment),
                         // bottom right corner
-                        (36, None)  | (_, Some(VirtualKeyCode::J))      => squares[0].siz_delta(-0.01f32, 0.00f32),
-                        (38, None)  | (_, Some(VirtualKeyCode::L))      => squares[0].siz_delta( 0.01f32, 0.00f32),
-                        (23, None)  | (_, Some(VirtualKeyCode::I))      => squares[0].siz_delta( 0.00f32,-0.01f32),
-                        (37, None)  | (_, Some(VirtualKeyCode::K))      => squares[0].siz_delta( 0.00f32, 0.01f32),
+                        (36, None)  | (_, Some(VirtualKeyCode::J))      => squares[1].siz_delta(-1.00f32, 0.00f32),
+                        (38, None)  | (_, Some(VirtualKeyCode::L))      => squares[1].siz_delta( 1.00f32, 0.00f32),
+                        (23, None)  | (_, Some(VirtualKeyCode::I))      => squares[1].siz_delta( 0.00f32,-1.00f32),
+                        (37, None)  | (_, Some(VirtualKeyCode::K))      => squares[1].siz_delta( 0.00f32, 1.00f32),
                         // world translation
-                        (105, None) | (_, Some(VirtualKeyCode::Left))   => world.pos_delta( 0.01f32, 0.00f32),
-                        (106, None) | (_, Some(VirtualKeyCode::Right))  => world.pos_delta(-0.01f32, 0.00f32),
-                        (103, None) | (_, Some(VirtualKeyCode::Up))     => world.pos_delta( 0.00f32, 0.01f32),
-                        (108, None) | (_, Some(VirtualKeyCode::Down))   => world.pos_delta( 0.00f32,-0.01f32),
+                        (105, None) | (_, Some(VirtualKeyCode::Left))   => world.pos_delta( save.x_increment, 0.00f32),
+                        (106, None) | (_, Some(VirtualKeyCode::Right))  => world.pos_delta(-save.x_increment, 0.00f32),
+                        (103, None) | (_, Some(VirtualKeyCode::Up))     => world.pos_delta( 0.00f32, save.y_increment),
+                        (108, None) | (_, Some(VirtualKeyCode::Down))   => world.pos_delta( 0.00f32,-save.y_increment),
                         // world scale
                         (12, None)  | (_, Some(VirtualKeyCode::Minus))                                     => world.scale_down(),
                         (13, None)  | (_, Some(VirtualKeyCode::Add)) | (_, Some(VirtualKeyCode::Equals))   => world.scale_up(),
-                        _ => {
-                            println!("ignoring keycode {:?} / {:?}", raw_code, maybe_virt_code);
-                        },
+                        _ => println!("ignoring keycode {:?} / {:?}", raw_code, maybe_virt_code),
                     },
                     WindowEvent::Resized(size) => {
                         let physical = size.to_physical(hidpi_factor);
@@ -416,11 +486,12 @@ fn main() {
             rpass.set_pipeline(&render_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
             rpass.set_bind_group(1, &world.world_bind_group, &[]);
-            for square in squares.iter().rev() {
+            for square in squares.iter() {
                 rpass.set_bind_group(2, &square.local_bind_group, &[]);
                 rpass.draw(0..6, 0..1);
             }
         }
         device.get_queue().submit(&[encoder.finish()]);
     }
+    Ok(())
 }
