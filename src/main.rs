@@ -35,14 +35,69 @@ impl Square {
             x, y, sx, sy, tx, ty, stx, sty, uniform_size, uniform_buf, uniform_buf_dirty: false, local_bind_group,
         }
     }
-    fn delta(&mut self, dx: f32, dy: f32) {
+    fn pos_delta(&mut self, dx: f32, dy: f32) {
         self.x += dx;
         self.y += dy;
+        self.uniform_buf_dirty = true;
+    }
+    fn siz_delta(&mut self, dx: f32, dy: f32) {
+        self.sx += dx;
+        self.sy += dy;
         self.uniform_buf_dirty = true;
     }
     fn maybe_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         if self.uniform_buf_dirty {
             let updated_uniform_buf = device.create_buffer_mapped(8, wgpu::BufferUsage::TRANSFER_SRC).fill_from_slice(&[self.x, self.y, self.sx, self.sy, self.tx, self.ty, self.stx, self.sty]);
+            encoder.copy_buffer_to_buffer(&updated_uniform_buf, 0, &self.uniform_buf, 0, self.uniform_size);
+        }
+    }
+}
+
+struct World {
+    x: f32,
+    y: f32,
+    scale: f32,
+    uniform_size: u64,
+    uniform_buf: wgpu::Buffer,
+    uniform_buf_dirty: bool,
+    pub world_bind_group: wgpu::BindGroup,
+}
+impl World {
+    fn new(x: f32, y: f32, scale: f32, device: &wgpu::Device, world_bind_group_layout: &wgpu::BindGroupLayout) -> World {
+        let uniform_buf = device.create_buffer_mapped(4, wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::TRANSFER_DST).fill_from_slice(&[x, y, scale, scale]);
+        let uniform_size = 4*4;
+        let world_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: world_bind_group_layout,
+            bindings: &[
+                wgpu::Binding {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer {
+                        buffer: &uniform_buf,
+                        range: 0 .. uniform_size,
+                    },
+                },
+            ],
+        });
+        World {
+            x, y, scale, uniform_size, uniform_buf, uniform_buf_dirty: false, world_bind_group,
+        }
+    }
+    fn pos_delta(&mut self, dx: f32, dy: f32) {
+        self.x += dx;
+        self.y += dy;
+        self.uniform_buf_dirty = true;
+    }
+    fn scale_up(&mut self) {
+        self.scale *= 1.0/0.9;
+        self.uniform_buf_dirty = true;
+    }
+    fn scale_down(&mut self) {
+        self.scale *= 0.9;
+        self.uniform_buf_dirty = true;
+    }
+    fn maybe_update(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        if self.uniform_buf_dirty {
+            let updated_uniform_buf = device.create_buffer_mapped(4, wgpu::BufferUsage::TRANSFER_SRC).fill_from_slice(&[self.x, self.y, self.scale, self.scale]);
             encoder.copy_buffer_to_buffer(&updated_uniform_buf, 0, &self.uniform_buf, 0, self.uniform_size);
         }
     }
@@ -81,7 +136,13 @@ fn main() {
     let vs_words = compile_shadercode(r#"
     #version 450
     layout(location = 0) out vec2 v_TexCoord;
-    layout(set = 1, binding = 0) uniform PosTex {
+    layout(set = 1, binding = 0) uniform WorldPosScale {
+        float world_x;
+        float world_y;
+        float world_sx;
+        float world_sy;
+    };
+    layout(set = 2, binding = 0) uniform PosTex {
         float x;
         float y;
         float sx;
@@ -96,13 +157,13 @@ fn main() {
         //vec4 gl_Position;
     //};
     const vec2 positions[6] = vec2[6](
-        vec2(-0.5, -0.5),
-        vec2( 0.5,  0.5),
-        vec2(-0.5,  0.5),
+        vec2( 0.0,  0.0),
+        vec2( 1.0,  1.0),
+        vec2( 0.0,  1.0),
 
-        vec2(-0.5, -0.5),
-        vec2( 0.5, -0.5),
-        vec2( 0.5,  0.5)
+        vec2( 0.0,  0.0),
+        vec2( 1.0,  0.0),
+        vec2( 1.0,  1.0)
     );
     const vec2 tex[6] = vec2[6](
         vec2(1.0, 1.0),
@@ -114,7 +175,7 @@ fn main() {
         vec2(0.0, 0.0)
     );
     void main() {
-        gl_Position = vec4(positions[gl_VertexIndex].x*sx + x, positions[gl_VertexIndex].y*sy + y, 0.0, 1.0);
+        gl_Position = vec4((positions[gl_VertexIndex].x*sx + x + world_x) * world_sx, (positions[gl_VertexIndex].y*sy + y + world_y) * world_sy, 0.0, 1.0);
         v_TexCoord = vec2(tex[gl_VertexIndex].x*stx + tx, tex[gl_VertexIndex].y*sty + ty);
     }"#, glsl_to_spirv::ShaderType::Vertex);
     let vs_module = device.create_shader_module(&vs_words);
@@ -214,6 +275,15 @@ fn main() {
             },
         ],
     });
+    let world_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        bindings: &[
+            wgpu::BindGroupLayoutBinding {
+                binding: 0,
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer,
+            },
+        ],
+    });
     let local_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         bindings: &[
             wgpu::BindGroupLayoutBinding {
@@ -223,12 +293,13 @@ fn main() {
             },
         ],
     });
+    let mut world = World::new(0.0, 0.0, 1.0, &device, &world_bind_group_layout);
     let mut squares = vec![
         Square::new(0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout),
         Square::new(0.5, 0.5, 1.0, 1.0, 1.0, 1.0,-1.0,-1.0, &device, &local_bind_group_layout),
     ];
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        bind_group_layouts: &[&bind_group_layout, &local_bind_group_layout],
+        bind_group_layouts: &[&bind_group_layout, &world_bind_group_layout, &local_bind_group_layout],
     });
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         layout: &pipeline_layout,
@@ -269,6 +340,9 @@ fn main() {
     };
     let mut swap_chain = device.create_swap_chain( &surface, &swap_chain_descriptor);
     let mut running = true;
+    let mut world_x = 0.0;
+    let mut world_y = 0.0;
+    let mut world_scale = 0.0;
     while running {
         events_loop.poll_events(|event| {
             println!("{:?} event is", event);
@@ -282,14 +356,28 @@ fn main() {
                                                                       },
                                                   ..
                     } => match (raw_code, maybe_virt_code) {
-                        (1, None) | (_, Some(VirtualKeyCode::Escape)) => running = false,
-                        (30, None) | (_, Some(VirtualKeyCode::A)) => squares[0].delta(-0.01f32, 0.0f32),
-                        (32, None) | (_, Some(VirtualKeyCode::D)) => squares[0].delta( 0.01f32, 0.0f32),
-                        (17, None) | (_, Some(VirtualKeyCode::W)) => squares[0].delta( 0.0f32, -0.01f32),
-                        (31, None) | (_, Some(VirtualKeyCode::S)) => squares[0].delta( 0.0f32,  0.01f32),
-                        (57, None) | (_, Some(VirtualKeyCode::Space)) => {
+                        (1, None)   | (_, Some(VirtualKeyCode::Escape)) => running = false,
+                        (57, None)  | (_, Some(VirtualKeyCode::Space))  => {
                             squares.push(Square::new(0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout));
                         },
+                        // top left corner
+                        (30, None)  | (_, Some(VirtualKeyCode::A))      => squares[0].pos_delta(-0.01f32, 0.00f32),
+                        (32, None)  | (_, Some(VirtualKeyCode::D))      => squares[0].pos_delta( 0.01f32, 0.00f32),
+                        (17, None)  | (_, Some(VirtualKeyCode::W))      => squares[0].pos_delta( 0.00f32,-0.01f32),
+                        (31, None)  | (_, Some(VirtualKeyCode::S))      => squares[0].pos_delta( 0.00f32, 0.01f32),
+                        // bottom right corner
+                        (36, None)  | (_, Some(VirtualKeyCode::J))      => squares[0].siz_delta(-0.01f32, 0.00f32),
+                        (38, None)  | (_, Some(VirtualKeyCode::L))      => squares[0].siz_delta( 0.01f32, 0.00f32),
+                        (23, None)  | (_, Some(VirtualKeyCode::I))      => squares[0].siz_delta( 0.00f32,-0.01f32),
+                        (37, None)  | (_, Some(VirtualKeyCode::K))      => squares[0].siz_delta( 0.00f32, 0.01f32),
+                        // world translation
+                        (105, None) | (_, Some(VirtualKeyCode::Left))   => world.pos_delta( 0.01f32, 0.00f32),
+                        (106, None) | (_, Some(VirtualKeyCode::Right))  => world.pos_delta(-0.01f32, 0.00f32),
+                        (103, None) | (_, Some(VirtualKeyCode::Up))     => world.pos_delta( 0.00f32, 0.01f32),
+                        (108, None) | (_, Some(VirtualKeyCode::Down))   => world.pos_delta( 0.00f32,-0.01f32),
+                        // world scale
+                        (12, None)  | (_, Some(VirtualKeyCode::Minus))                                     => world.scale_down(),
+                        (13, None)  | (_, Some(VirtualKeyCode::Add)) | (_, Some(VirtualKeyCode::Equals))   => world.scale_up(),
                         _ => {
                             println!("ignoring keycode {:?} / {:?}", raw_code, maybe_virt_code);
                         },
@@ -310,6 +398,7 @@ fn main() {
 
         let frame = swap_chain.get_next_texture();
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo : 0 });
+        world.maybe_update(&device, &mut encoder);
         for square in &mut squares {
             square.maybe_update(&device, &mut encoder);
         }
@@ -326,9 +415,9 @@ fn main() {
             });
             rpass.set_pipeline(&render_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
-
+            rpass.set_bind_group(1, &world.world_bind_group, &[]);
             for square in squares.iter().rev() {
-                rpass.set_bind_group(1, &square.local_bind_group, &[]);
+                rpass.set_bind_group(2, &square.local_bind_group, &[]);
                 rpass.draw(0..6, 0..1);
             }
         }
