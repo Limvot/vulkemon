@@ -1,5 +1,7 @@
 
 use std::fs::File;
+use std::collections::{BTreeMap, BTreeSet, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 use failure::Error;
 
 use serde::{Serialize, Deserialize};
@@ -131,6 +133,7 @@ struct Save {
     y_start: f32,
     width_in_tiles: f32,
     height_in_tiles: f32,
+    hash_to_type: BTreeMap<u64, f32>,
 }
 
 fn main() -> Result<(), Error> {
@@ -381,6 +384,33 @@ fn main() -> Result<(), Error> {
             y_start: 0.0,
             width_in_tiles: 0.0,
             height_in_tiles: 0.0,
+            hash_to_type: BTreeMap::new(),
+        }
+    };
+    let hash_tile = |x, y, save: &Save| {
+        let mut hasher = DefaultHasher::new();
+        for (px, py) in (0..(save.x_increment as u32)).flat_map(|px| (0..(save.y_increment as u32)).map(move |py| (px,py))) {
+            let global_x = px + save.x_start as u32 + save.x_increment as u32 * x as u32;
+            let global_y = py + save.y_start as u32 + save.y_increment as u32 * y as u32;
+            let double_reversed_index = ((theight-global_y)*twidth + (twidth-global_x)) * 4;
+            for pixel in double_reversed_index..(double_reversed_index+4) {
+                texels[pixel as usize].hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    };
+    let mut refresh_squares = |squares: &mut Vec<Square>, save: &Save, device: &wgpu::Device, local_bind_group_layout: &wgpu::BindGroupLayout| {
+        squares.drain(2..);
+        for i in 0..(save.width_in_tiles as usize) {
+            for j in 0..(save.height_in_tiles as usize) {
+                let size = save.hash_to_type.get(&hash_tile(i,j, &save)).cloned().unwrap_or(0.5f32);
+                squares.push(Square::new(
+                save.x_start + (i as f32 + (1.0f32-size)/2.0) * save.x_increment,
+                save.y_start + (j as f32 + (1.0f32-size)/2.0) * save.y_increment,
+                save.x_increment*size,
+                save.y_increment*size,
+                0.0, 0.0, 1.0, 1.0, device, local_bind_group_layout));
+            }
         }
     };
     squares[1].set_pos(save.x_start, save.y_start);
@@ -419,18 +449,15 @@ fn main() -> Result<(), Error> {
                             println!("\nsaved!\n");
                         },
                         (57, None)  | (_, Some(VirtualKeyCode::Space))  => {
-                            squares.drain(2..);
-                            for i in 0..(save.width_in_tiles as usize) {
-                                for j in 0..(save.height_in_tiles as usize) {
-                                    squares.push(Square::new(save.x_start + (i as f32 + 0.25) * save.x_increment,
-                                                             save.y_start + (j as f32 + 0.25) * save.y_increment,
-                                                             save.x_increment/2.0,
-                                                             save.y_increment/2.0,
-                                                              0.0, 0.0, 1.0, 1.0, &device, &local_bind_group_layout));
-                                }
-                            }
-                            println!("\n{},{} {},{}\n", squares[1].x, squares[1].y, squares[1].sx, squares[1].sy);
-                            println!("squares len {}", squares.len());
+                            refresh_squares(&mut squares, &save, &device, &local_bind_group_layout);
+                        },
+                        (16, None)  | (_, Some(VirtualKeyCode::Q))  => {
+                            save.hash_to_type.insert(hash_tile(((squares[1].x - save.x_start) / save.x_increment) as usize, ((squares[1].y - save.y_start) / save.y_increment) as usize, &save), 0.9f32);
+                            refresh_squares(&mut squares, &save, &device, &local_bind_group_layout);
+                        },
+                        (18, None)  | (_, Some(VirtualKeyCode::E))  => {
+                            save.hash_to_type.insert(hash_tile(((squares[1].x - save.x_start) / save.x_increment) as usize, ((squares[1].y - save.y_start) / save.y_increment) as usize, &save), 0.1f32);
+                            refresh_squares(&mut squares, &save, &device, &local_bind_group_layout);
                         },
                         // top left corner
                         (30, None)  | (_, Some(VirtualKeyCode::A))      => squares[1].pos_delta(-save.x_increment, 0.00f32),
