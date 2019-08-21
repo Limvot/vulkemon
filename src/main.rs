@@ -131,8 +131,8 @@ struct Save {
     y_increment: f32,
     x_start: f32,
     y_start: f32,
-    width_in_tiles: f32,
-    height_in_tiles: f32,
+    width_in_tiles:  usize,
+    height_in_tiles: usize,
     hash_to_type: BTreeMap<u64, f32>,
 }
 
@@ -382,11 +382,13 @@ fn main() -> Result<(), Error> {
             y_increment: 1.0,
             x_start: 0.0,
             y_start: 0.0,
-            width_in_tiles: 0.0,
-            height_in_tiles: 0.0,
+            width_in_tiles:  0,
+            height_in_tiles: 0,
             hash_to_type: BTreeMap::new(),
         }
     };
+    let to_tile_x = |x, save: &Save| ((x - save.x_start) / save.x_increment) as usize;
+    let to_tile_y = |y, save: &Save| ((y - save.y_start) / save.y_increment) as usize;
     let hash_tile = |x, y, save: &Save| {
         let mut hasher = DefaultHasher::new();
         for (px, py) in (0..(save.x_increment as u32)).flat_map(|px| (0..(save.y_increment as u32)).map(move |py| (px,py))) {
@@ -401,8 +403,8 @@ fn main() -> Result<(), Error> {
     };
     let mut refresh_squares = |squares: &mut Vec<Square>, save: &Save, device: &wgpu::Device, local_bind_group_layout: &wgpu::BindGroupLayout| {
         squares.drain(2..);
-        for i in 0..(save.width_in_tiles as usize) {
-            for j in 0..(save.height_in_tiles as usize) {
+        for i in 0..save.width_in_tiles {
+            for j in 0..save.height_in_tiles {
                 let size = save.hash_to_type.get(&hash_tile(i,j, &save)).cloned().unwrap_or(0.5f32);
                 squares.push(Square::new(
                 save.x_start + (i as f32 + (1.0f32-size)/2.0) * save.x_increment,
@@ -415,6 +417,7 @@ fn main() -> Result<(), Error> {
     };
     squares[1].set_pos(save.x_start, save.y_start);
     squares[1].set_siz(save.x_increment, save.y_increment);
+    let mut collide = false;
     while running {
         events_loop.poll_events(|event| {
             println!("{:?} event is", event);
@@ -440,8 +443,8 @@ fn main() -> Result<(), Error> {
                             save.y_start = squares[1].y;
                         },
                         (46, None)  | (_, Some(VirtualKeyCode::C))  => {
-                            save.width_in_tiles =  (squares[1].x - save.x_start) / save.x_increment;
-                            save.height_in_tiles = (squares[1].y - save.y_start) / save.y_increment;
+                            save.width_in_tiles =  to_tile_x(squares[1].x, &save);
+                            save.height_in_tiles = to_tile_y(squares[1].y, &save);
                             println!("\nsetting tile widht/height {},{} {},{} - !{}, {}!\n", squares[1].x, squares[1].y, squares[1].sx, squares[1].sy, save.width_in_tiles, save.height_in_tiles);
                         },
                         (47, None)  | (_, Some(VirtualKeyCode::V))  => {
@@ -452,18 +455,21 @@ fn main() -> Result<(), Error> {
                             refresh_squares(&mut squares, &save, &device, &local_bind_group_layout);
                         },
                         (16, None)  | (_, Some(VirtualKeyCode::Q))  => {
-                            save.hash_to_type.insert(hash_tile(((squares[1].x - save.x_start) / save.x_increment) as usize, ((squares[1].y - save.y_start) / save.y_increment) as usize, &save), 0.9f32);
+                            save.hash_to_type.insert(hash_tile(to_tile_x(squares[1].x, &save), to_tile_y(squares[1].y, &save), &save), 0.9f32);
                             refresh_squares(&mut squares, &save, &device, &local_bind_group_layout);
                         },
                         (18, None)  | (_, Some(VirtualKeyCode::E))  => {
-                            save.hash_to_type.insert(hash_tile(((squares[1].x - save.x_start) / save.x_increment) as usize, ((squares[1].y - save.y_start) / save.y_increment) as usize, &save), 0.1f32);
+                            save.hash_to_type.insert(hash_tile(to_tile_x(squares[1].x, &save), to_tile_y(squares[1].y, &save), &save), 0.1f32);
                             refresh_squares(&mut squares, &save, &device, &local_bind_group_layout);
                         },
+                        (19, None)  | (_, Some(VirtualKeyCode::R))  => {
+                            collide = !collide;
+                        },
                         // top left corner
-                        (30, None)  | (_, Some(VirtualKeyCode::A))      => squares[1].pos_delta(-save.x_increment, 0.00f32),
-                        (32, None)  | (_, Some(VirtualKeyCode::D))      => squares[1].pos_delta( save.x_increment, 0.00f32),
-                        (17, None)  | (_, Some(VirtualKeyCode::W))      => squares[1].pos_delta( 0.00f32,-save.y_increment),
-                        (31, None)  | (_, Some(VirtualKeyCode::S))      => squares[1].pos_delta( 0.00f32, save.y_increment),
+                        (30, None)  | (_, Some(VirtualKeyCode::A))      => if !collide || save.hash_to_type.get(&hash_tile(to_tile_x(squares[1].x-save.x_increment, &save), to_tile_y(squares[1].y, &save), &save)).cloned().unwrap_or(1.0) < 0.5 { squares[1].pos_delta(-save.x_increment, 0.00f32) },
+                        (32, None)  | (_, Some(VirtualKeyCode::D))      => if !collide || save.hash_to_type.get(&hash_tile(to_tile_x(squares[1].x+save.x_increment, &save), to_tile_y(squares[1].y, &save), &save)).cloned().unwrap_or(1.0) < 0.5 { squares[1].pos_delta( save.x_increment, 0.00f32) },
+                        (17, None)  | (_, Some(VirtualKeyCode::W))      => if !collide || save.hash_to_type.get(&hash_tile(to_tile_x(squares[1].x, &save), to_tile_y(squares[1].y-save.y_increment, &save), &save)).cloned().unwrap_or(1.0) < 0.5 { squares[1].pos_delta( 0.00f32,-save.y_increment) },
+                        (31, None)  | (_, Some(VirtualKeyCode::S))      => if !collide || save.hash_to_type.get(&hash_tile(to_tile_x(squares[1].x, &save), to_tile_y(squares[1].y+save.y_increment, &save), &save)).cloned().unwrap_or(1.0) < 0.5 { squares[1].pos_delta( 0.00f32, save.y_increment) },
                         // bottom right corner
                         (36, None)  | (_, Some(VirtualKeyCode::J))      => squares[1].siz_delta(-1.00f32, 0.00f32),
                         (38, None)  | (_, Some(VirtualKeyCode::L))      => squares[1].siz_delta( 1.00f32, 0.00f32),
