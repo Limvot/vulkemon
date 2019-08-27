@@ -16,7 +16,7 @@
 - [x] Collision Detection
 - [ ] Animation with Editing
 - [ ] Animated Walking Character
-- [ ] Text Rendering
+- [x] Text Rendering
 - [ ] Dialogs
 - [ ] Basic Event Triggers Script
 - [ ] Full Custom Level Creation

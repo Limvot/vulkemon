@@ -15,3 +15,4 @@ ensure_downloaded() {
 }
 
 ensure_downloaded "https://www.spriters-resource.com/resources/sheets/18/19776.png" "littleroot.png"
+ensure_downloaded "https://www.spriters-resource.com/resources/sheets/8/8368.gif" "font.gif"
